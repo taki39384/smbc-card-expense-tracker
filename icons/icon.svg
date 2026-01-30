@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00a650;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#008040;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Card background -->
+  <rect x="14" y="32" width="100" height="64" rx="8" fill="url(#cardGrad)"/>
+  <!-- Card stripe -->
+  <rect x="14" y="48" width="100" height="12" fill="#006030"/>
+  <!-- Yen symbol -->
+  <text x="64" y="85" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="white" text-anchor="middle">¥</text>
+  <!-- Sum symbol in corner -->
+  <circle cx="100" cy="46" r="16" fill="white"/>
+  <text x="100" y="52" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#00a650" text-anchor="middle">Σ</text>
+</svg>

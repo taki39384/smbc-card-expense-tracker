@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>三井住友カード利用通知集計</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>三井住友カード<br>利用通知集計</h1>
+
+    <div class="section">
+      <h2>期間選択</h2>
+      <div class="quick-buttons">
+        <button id="btn-this-month" class="quick-btn">今月</button>
+        <button id="btn-last-month" class="quick-btn">先月</button>
+        <button id="btn-last-3-months" class="quick-btn">過去3ヶ月</button>
+      </div>
+
+      <div class="date-inputs">
+        <div class="date-field">
+          <label for="start-date">開始日</label>
+          <input type="date" id="start-date">
+        </div>
+        <div class="date-field">
+          <label for="end-date">終了日</label>
+          <input type="date" id="end-date">
+        </div>
+      </div>
+    </div>
+
+    <button id="btn-aggregate" class="aggregate-btn">集計実行</button>
+
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <p>集計中...</p>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+
+    <div id="results" class="results hidden">
+      <div class="summary">
+        <div class="summary-item">
+          <span class="label">合計金額</span>
+          <span id="total-amount" class="value">¥0</span>
+        </div>
+        <div class="summary-item">
+          <span class="label">件数</span>
+          <span id="total-count" class="value">0件</span>
+        </div>
+      </div>
+
+      <div class="details">
+        <h3>明細</h3>
+        <ul id="detail-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
