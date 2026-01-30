@@ -41,12 +41,12 @@
       };
     }
 
-    // Process each email to extract amount
+    // Process each email thread to extract amounts
     const details = [];
     let totalAmount = 0;
-    const totalEmails = emailItems.length;
+    const totalThreads = emailItems.length;
 
-    for (let i = 0; i < totalEmails; i++) {
+    for (let i = 0; i < totalThreads; i++) {
       try {
         // Re-fetch email items after each iteration (DOM may have changed)
         const currentItems = await getEmailItems();
@@ -55,15 +55,26 @@
           break;
         }
 
-        console.log(`Processing email ${i + 1}/${totalEmails}`);
-        const emailData = await openAndParseEmail(currentItems[i], i);
-        if (emailData) {
-          details.push(emailData);
-          totalAmount += emailData.amount;
-          console.log('Extracted:', emailData);
+        console.log(`Processing thread ${i + 1}/${totalThreads}`);
+        const emailDataList = await openAndParseEmail(currentItems[i], i);
+
+        // emailDataList is now an array of emails from the thread
+        if (emailDataList && Array.isArray(emailDataList)) {
+          for (const emailData of emailDataList) {
+            if (emailData) {
+              details.push(emailData);
+              totalAmount += emailData.amount;
+              console.log('Extracted:', emailData);
+            }
+          }
+        } else if (emailDataList) {
+          // Fallback for single email
+          details.push(emailDataList);
+          totalAmount += emailDataList.amount;
+          console.log('Extracted:', emailDataList);
         }
       } catch (e) {
-        console.error('Error processing email:', e);
+        console.error('Error processing thread:', e);
       }
     }
 
@@ -142,15 +153,18 @@
   }
 
   async function openAndParseEmail(emailRow, index) {
-    // Click to open email
+    // Click to open email/thread
     emailRow.click();
-    await sleep(1500);
+    await sleep(2000);
 
     // Wait for email content to load
     await waitForEmailContent();
 
-    // Parse email content
-    const emailData = parseEmailContent();
+    // First, expand ALL collapsed messages in the thread
+    await forceExpandAllMessages();
+
+    // Then process all visible message bodies
+    const results = await extractAllMessageBodies();
 
     // Go back to search results
     await goBackToList();
@@ -159,7 +173,238 @@
     // Wait for list to be visible again
     await waitForListView();
 
-    return emailData;
+    return results;
+  }
+
+  async function forceExpandAllMessages() {
+    console.log('=== Force expanding all messages ===');
+
+    // Keep trying to expand until no more collapsed messages
+    let iteration = 0;
+    const maxIterations = 20;
+
+    while (iteration < maxIterations) {
+      iteration++;
+      let expandedAny = false;
+
+      // Method 1: Click on "○件のメッセージ" collapsed indicator
+      const collapsedCounters = document.querySelectorAll('.kQ');
+      for (const counter of collapsedCounters) {
+        if (counter && counter.offsetParent !== null && counter.textContent.match(/\d+/)) {
+          console.log(`Iteration ${iteration}: Clicking collapsed counter: ${counter.textContent}`);
+          counter.click();
+          await sleep(1500);
+          expandedAny = true;
+        }
+      }
+
+      // Method 2: Click on collapsed message rows (they have .kv class)
+      const collapsedRows = document.querySelectorAll('.kv');
+      for (const row of collapsedRows) {
+        if (row && row.offsetParent !== null) {
+          // Check if this row's message body is not visible
+          const parentGs = row.closest('.gs');
+          if (parentGs) {
+            const bodyInParent = parentGs.querySelector('.a3s.aiL, .ii.gt');
+            if (!bodyInParent || bodyInParent.offsetParent === null || bodyInParent.textContent.length < 50) {
+              console.log(`Iteration ${iteration}: Clicking collapsed row`);
+              row.click();
+              await sleep(1000);
+              expandedAny = true;
+            }
+          }
+        }
+      }
+
+      // Method 3: Click on message headers that might be collapsed
+      const messageHeaders = document.querySelectorAll('.gE.iv.gt, .h7, .iA.g6');
+      for (const header of messageHeaders) {
+        if (header && header.offsetParent !== null) {
+          const parentContainer = header.closest('[data-legacy-message-id], [data-message-id], .gs');
+          if (parentContainer) {
+            const bodyInContainer = parentContainer.querySelector('.a3s.aiL, .ii.gt');
+            if (!bodyInContainer || bodyInContainer.offsetParent === null || bodyInContainer.textContent.length < 50) {
+              console.log(`Iteration ${iteration}: Clicking message header`);
+              header.click();
+              await sleep(1000);
+              expandedAny = true;
+            }
+          }
+        }
+      }
+
+      // Method 4: Look for any "展開" or "expand" text links
+      const allSpans = document.querySelectorAll('span');
+      for (const span of allSpans) {
+        if (span.offsetParent !== null &&
+            (span.textContent.includes('展開') || span.textContent.toLowerCase().includes('expand'))) {
+          console.log(`Iteration ${iteration}: Clicking expand link: ${span.textContent}`);
+          span.click();
+          await sleep(1000);
+          expandedAny = true;
+        }
+      }
+
+      if (!expandedAny) {
+        console.log(`No more messages to expand after ${iteration} iterations`);
+        break;
+      }
+    }
+
+    // Final count
+    const finalBodies = document.querySelectorAll('.a3s.aiL');
+    console.log(`=== Expansion complete. Found ${finalBodies.length} message bodies ===`);
+  }
+
+  async function extractAllMessageBodies() {
+    const results = [];
+    const processedKeys = new Set();
+
+    // Get all message bodies that are currently visible
+    const allBodies = document.querySelectorAll('.a3s.aiL');
+    console.log(`Extracting from ${allBodies.length} message bodies`);
+
+    for (let i = 0; i < allBodies.length; i++) {
+      const body = allBodies[i];
+
+      // Skip if not visible or too short
+      if (!body || body.offsetParent === null) {
+        console.log(`Body ${i + 1}: Not visible, skipping`);
+        continue;
+      }
+
+      const text = body.textContent || '';
+      if (text.length < 50) {
+        console.log(`Body ${i + 1}: Too short (${text.length} chars), skipping`);
+        continue;
+      }
+
+      console.log(`Body ${i + 1}: Parsing (${text.length} chars)`);
+
+      const emailData = parseEmailBodyElement(body);
+      if (emailData) {
+        const key = `${emailData.date}-${emailData.amount}-${emailData.store}`;
+        if (!processedKeys.has(key)) {
+          processedKeys.add(key);
+          results.push(emailData);
+          console.log(`Body ${i + 1}: Extracted - date: ${emailData.date}, amount: ${emailData.amount}, store: ${emailData.store}`);
+        } else {
+          console.log(`Body ${i + 1}: Duplicate key ${key}, skipping`);
+        }
+      } else {
+        console.log(`Body ${i + 1}: No data extracted`);
+      }
+    }
+
+    // Fallback: try .ii.gt selector if no results
+    if (results.length === 0) {
+      console.log('Trying fallback selector .ii.gt');
+      const altBodies = document.querySelectorAll('.ii.gt');
+      for (let i = 0; i < altBodies.length; i++) {
+        const body = altBodies[i];
+        if (body && body.offsetParent !== null && body.textContent.length > 50) {
+          const emailData = parseEmailBodyElement(body);
+          if (emailData) {
+            const key = `${emailData.date}-${emailData.amount}-${emailData.store}`;
+            if (!processedKeys.has(key)) {
+              processedKeys.add(key);
+              results.push(emailData);
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`=== Total extracted: ${results.length} messages ===`);
+    return results;
+  }
+
+  function parseCurrentEmailBody() {
+    // Find the currently visible email body
+    const emailBody = document.querySelector('.a3s.aiL') ||
+                     document.querySelector('.ii.gt');
+
+    if (!emailBody) {
+      console.log('No email body found');
+      return null;
+    }
+
+    return parseEmailBodyElement(emailBody);
+  }
+
+  function parseEmailBodyElement(element) {
+    if (!element) return null;
+
+    const text = element.textContent || element.innerText;
+    if (!text || text.length < 50) return null;
+
+    // Extract amount using various patterns
+    let amount = 0;
+
+    // Pattern 1: ご利用金額：〇〇,〇〇〇円
+    const pattern1 = /ご利用金額[：:]\s*([0-9,]+)\s*円/;
+    const match1 = text.match(pattern1);
+    if (match1) {
+      amount = parseInt(match1[1].replace(/,/g, ''), 10);
+    }
+
+    // Pattern 2: ¥〇〇,〇〇〇 or ￥〇〇,〇〇〇
+    if (amount === 0) {
+      const pattern2 = /[¥￥]\s*([0-9,]+)/;
+      const match2 = text.match(pattern2);
+      if (match2) {
+        amount = parseInt(match2[1].replace(/,/g, ''), 10);
+      }
+    }
+
+    // Pattern 3: 〇〇,〇〇〇円
+    if (amount === 0) {
+      const pattern3 = /([0-9]{1,3}(?:,[0-9]{3})*)\s*円/;
+      const match3 = text.match(pattern3);
+      if (match3) {
+        amount = parseInt(match3[1].replace(/,/g, ''), 10);
+      }
+    }
+
+    if (amount === 0) return null;
+
+    // Extract date
+    let date = '';
+    const datePattern1 = /ご利用日[：:]\s*(\d{4})[年\/](\d{1,2})[月\/](\d{1,2})/;
+    const dateMatch1 = text.match(datePattern1);
+    if (dateMatch1) {
+      date = `${dateMatch1[1]}/${dateMatch1[2].padStart(2, '0')}/${dateMatch1[3].padStart(2, '0')}`;
+    }
+
+    if (!date) {
+      const datePattern2 = /(\d{4})[年\/](\d{1,2})[月\/](\d{1,2})/;
+      const dateMatch2 = text.match(datePattern2);
+      if (dateMatch2) {
+        date = `${dateMatch2[1]}/${dateMatch2[2].padStart(2, '0')}/${dateMatch2[3].padStart(2, '0')}`;
+      }
+    }
+
+    // Extract store name
+    let store = '';
+    const storePattern = /(?:ご利用先|利用先)[：:]\s*(.+?)(?:\n|$|ご利用金額)/;
+    const storeMatch = text.match(storePattern);
+    if (storeMatch) {
+      store = storeMatch[1].trim();
+    }
+
+    if (!store) {
+      const storePattern2 = /(?:店名|加盟店)[：:]\s*(.+?)(?:\n|$)/;
+      const storeMatch2 = text.match(storePattern2);
+      if (storeMatch2) {
+        store = storeMatch2[1].trim();
+      }
+    }
+
+    return {
+      date: date || '日付不明',
+      store: store || '店舗不明',
+      amount
+    };
   }
 
   async function waitForEmailContent() {
