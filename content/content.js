@@ -384,19 +384,72 @@
       }
     }
 
-    // Extract store name
+    // Extract store name with multiple patterns
     let store = '';
-    const storePattern = /(?:ご利用先|利用先)[：:]\s*(.+?)(?:\n|$|ご利用金額)/;
-    const storeMatch = text.match(storePattern);
-    if (storeMatch) {
-      store = storeMatch[1].trim();
+
+    // Pattern 1: ご利用先：店舗名
+    const storePattern1 = /(?:ご利用先|利用先)[：:]\s*(.+?)(?:\n|$|ご利用金額|ご利用日)/;
+    const storeMatch1 = text.match(storePattern1);
+    if (storeMatch1) {
+      store = storeMatch1[1].trim();
     }
 
+    // Pattern 2: 店名・加盟店
     if (!store) {
-      const storePattern2 = /(?:店名|加盟店)[：:]\s*(.+?)(?:\n|$)/;
+      const storePattern2 = /(?:店名|加盟店|加盟店名)[：:]\s*(.+?)(?:\n|$)/;
       const storeMatch2 = text.match(storePattern2);
       if (storeMatch2) {
         store = storeMatch2[1].trim();
+      }
+    }
+
+    // Pattern 3: Look for text between common markers in SMBC notifications
+    // Example: "○○○でご利用" pattern
+    if (!store) {
+      const storePattern3 = /(.+?)(?:にて|で)(?:の)?(?:ご利用|お支払い|ご購入)/;
+      const storeMatch3 = text.match(storePattern3);
+      if (storeMatch3 && storeMatch3[1].length < 50) {
+        store = storeMatch3[1].trim();
+      }
+    }
+
+    // Pattern 4: Look for store name after "ご利用内容" section
+    if (!store) {
+      const storePattern4 = /ご利用内容[：:]*\s*\n?\s*(.+?)(?:\n|$|ご利用金額|ご利用日)/;
+      const storeMatch4 = text.match(storePattern4);
+      if (storeMatch4) {
+        store = storeMatch4[1].trim();
+      }
+    }
+
+    // Pattern 5: Look for merchant name in various formats
+    if (!store) {
+      const storePattern5 = /(?:お店|販売店|ショップ|店舗)[：:]\s*(.+?)(?:\n|$)/;
+      const storeMatch5 = text.match(storePattern5);
+      if (storeMatch5) {
+        store = storeMatch5[1].trim();
+      }
+    }
+
+    // Pattern 6: Extract from subject-like patterns in body
+    if (!store) {
+      const storePattern6 = /【(.+?)】.*(?:ご利用|お支払い)/;
+      const storeMatch6 = text.match(storePattern6);
+      if (storeMatch6 && storeMatch6[1].length < 30 && !storeMatch6[1].includes('三井住友')) {
+        store = storeMatch6[1].trim();
+      }
+    }
+
+    // Clean up store name
+    if (store) {
+      // Remove common prefixes/suffixes
+      store = store.replace(/^(株式会社|有限会社|合同会社)\s*/g, '');
+      store = store.replace(/\s*(株式会社|有限会社|合同会社)$/g, '');
+      // Remove extra whitespace
+      store = store.replace(/\s+/g, ' ').trim();
+      // Limit length
+      if (store.length > 30) {
+        store = store.substring(0, 30) + '...';
       }
     }
 

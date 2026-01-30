@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const totalAmountSpan = document.getElementById('total-amount');
   const totalCountSpan = document.getElementById('total-count');
   const detailList = document.getElementById('detail-list');
+  const copyAmountBtn = document.getElementById('copy-amount');
+  const copyToast = document.getElementById('copy-toast');
+
+  let currentTotalAmount = 0;
 
   // Initialize with current month
   setThisMonth();
@@ -37,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Aggregate button
   btnAggregate.addEventListener('click', executeAggregation);
+
+  // Copy button
+  copyAmountBtn.addEventListener('click', copyTotalAmount);
 
   function setThisMonth() {
     const now = new Date();
@@ -99,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showResults(data) {
+    currentTotalAmount = data.totalAmount;
     totalAmountSpan.textContent = `¥${data.totalAmount.toLocaleString()}`;
     totalCountSpan.textContent = `${data.count}件`;
 
@@ -114,6 +122,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     resultsDiv.classList.remove('hidden');
+  }
+
+  async function copyTotalAmount() {
+    try {
+      await navigator.clipboard.writeText(currentTotalAmount.toString());
+      showCopyToast();
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = currentTotalAmount.toString();
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      showCopyToast();
+    }
+  }
+
+  function showCopyToast() {
+    copyToast.classList.remove('hidden');
+    setTimeout(() => {
+      copyToast.classList.add('hidden');
+    }, 2000);
   }
 
   async function executeAggregation() {

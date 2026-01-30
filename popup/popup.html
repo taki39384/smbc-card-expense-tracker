@@ -43,13 +43,22 @@
       <div class="summary">
         <div class="summary-item">
           <span class="label">合計金額</span>
-          <span id="total-amount" class="value">¥0</span>
+          <div class="value-with-copy">
+            <span id="total-amount" class="value">¥0</span>
+            <button id="copy-amount" class="copy-btn" title="コピー">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="summary-item">
           <span class="label">件数</span>
           <span id="total-count" class="value">0件</span>
         </div>
       </div>
+      <div id="copy-toast" class="copy-toast hidden">コピーしました</div>
 
       <div class="details">
         <h3>明細</h3>
