@@ -20,14 +20,18 @@
     // Build search query for SMBC card notifications
     const searchQuery = `from:contact@vpass.ne.jp subject:ご利用のお知らせ after:${start} before:${end}`;
 
-    // Execute search via URL navigation (most reliable method)
-    await executeGmailSearchViaURL(searchQuery);
+    console.log('Search query:', searchQuery);
+
+    // Execute search via hash change (doesn't reload page)
+    await executeGmailSearch(searchQuery);
 
     // Wait for search results to load
     await waitForSearchResults();
 
     // Get all email items from search results
     const emailItems = await getEmailItems();
+
+    console.log('Found emails:', emailItems.length);
 
     if (emailItems.length === 0) {
       return {
@@ -40,17 +44,23 @@
     // Process each email to extract amount
     const details = [];
     let totalAmount = 0;
+    const totalEmails = emailItems.length;
 
-    for (let i = 0; i < emailItems.length; i++) {
+    for (let i = 0; i < totalEmails; i++) {
       try {
         // Re-fetch email items after each iteration (DOM may have changed)
         const currentItems = await getEmailItems();
-        if (i >= currentItems.length) break;
+        if (i >= currentItems.length) {
+          console.log('Email list changed, stopping at index:', i);
+          break;
+        }
 
+        console.log(`Processing email ${i + 1}/${totalEmails}`);
         const emailData = await openAndParseEmail(currentItems[i], i);
         if (emailData) {
           details.push(emailData);
           totalAmount += emailData.amount;
+          console.log('Extracted:', emailData);
         }
       } catch (e) {
         console.error('Error processing email:', e);
@@ -75,78 +85,47 @@
     return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
   }
 
-  async function executeGmailSearchViaURL(query) {
-    // Get current Gmail URL base
-    const currentUrl = window.location.href;
-    const baseMatch = currentUrl.match(/(https:\/\/mail\.google\.com\/mail\/u\/\d+)/);
-
-    if (!baseMatch) {
-      throw new Error('GmailのURLを認識できません。Gmailのメイン画面を開いてください。');
-    }
-
-    const baseUrl = baseMatch[1];
+  async function executeGmailSearch(query) {
     const encodedQuery = encodeURIComponent(query);
-    const searchUrl = `${baseUrl}/#search/${encodedQuery}`;
 
-    // Navigate to search URL
-    window.location.href = searchUrl;
+    // Use hash change to navigate (doesn't lose script context)
+    const newHash = `#search/${encodedQuery}`;
 
-    // Wait for URL to change and page to start loading
-    await waitForUrlChange(searchUrl);
+    console.log('Navigating to:', newHash);
 
-    // Additional wait for page content to load
-    await sleep(2000);
-  }
+    // Change hash to trigger Gmail's internal navigation
+    window.location.hash = newHash;
 
-  async function waitForUrlChange(targetUrl) {
-    const maxWait = 5000;
-    const interval = 100;
-    let waited = 0;
-
-    while (waited < maxWait) {
-      if (window.location.href.includes('#search/')) {
-        return;
-      }
-      await sleep(interval);
-      waited += interval;
-    }
+    // Wait for Gmail to process the hash change
+    await sleep(3000);
   }
 
   async function waitForSearchResults() {
-    // Wait for search results to load
     const maxWait = 15000;
     const interval = 500;
     let waited = 0;
 
+    console.log('Waiting for search results...');
+
     while (waited < maxWait) {
-      // Check if we're on a search results page
-      if (!window.location.href.includes('#search/')) {
-        await sleep(interval);
-        waited += interval;
-        continue;
-      }
-
-      // Check if results are loaded (either email rows exist or "no results" message)
+      // Check if results are loaded
       const emailRows = document.querySelectorAll('tr.zA');
-      const noResultsElements = document.querySelectorAll('.TC');
-      let noResults = false;
 
-      noResultsElements.forEach(el => {
-        if (el.textContent.includes('一致するメッセージがありません') ||
-            el.textContent.includes('No messages matched')) {
-          noResults = true;
-        }
-      });
+      // Check for "no results" message
+      const pageText = document.body.innerText;
+      const noResults = pageText.includes('一致するメッセージがありません') ||
+                       pageText.includes('No messages matched your search');
 
-      // Also check for the empty state
-      const emptyState = document.querySelector('.ae4');
-      if (emptyState && emptyState.textContent.includes('一致する')) {
-        noResults = true;
+      console.log(`Waiting... found ${emailRows.length} rows, noResults: ${noResults}`);
+
+      if (emailRows.length > 0) {
+        console.log('Search results loaded');
+        await sleep(500);
+        return;
       }
 
-      if (emailRows.length > 0 || noResults) {
-        // Wait a bit more for full render
-        await sleep(500);
+      if (noResults) {
+        console.log('No results found');
         return;
       }
 
@@ -154,11 +133,10 @@
       waited += interval;
     }
 
-    throw new Error('検索結果の読み込みがタイムアウトしました。');
+    console.log('Timeout waiting for search results');
   }
 
   async function getEmailItems() {
-    // Get all email row elements from the current view
     const rows = document.querySelectorAll('tr.zA');
     return Array.from(rows);
   }
@@ -190,17 +168,21 @@
     let waited = 0;
 
     while (waited < maxWait) {
-      const emailBody = document.querySelector('.a3s.aiL') ||
-                       document.querySelector('.ii.gt') ||
-                       document.querySelector('[data-message-id]');
+      // Look for email body in various Gmail layouts
+      const emailBodies = document.querySelectorAll('.a3s.aiL, .ii.gt, .gs .adP');
 
-      if (emailBody && emailBody.textContent.length > 50) {
-        return;
+      for (const body of emailBodies) {
+        if (body && body.textContent && body.textContent.length > 100) {
+          console.log('Email content loaded');
+          return;
+        }
       }
 
       await sleep(interval);
       waited += interval;
     }
+
+    console.log('Timeout waiting for email content');
   }
 
   async function waitForListView() {
@@ -219,16 +201,22 @@
   }
 
   function parseEmailContent() {
-    // Find email body
-    const emailBody = document.querySelector('.a3s.aiL') ||
-                     document.querySelector('.ii.gt') ||
-                     document.querySelector('.gs');
+    // Find all potential email body containers
+    const emailBodies = document.querySelectorAll('.a3s.aiL, .ii.gt, .gs');
 
-    if (!emailBody) {
+    let text = '';
+    for (const body of emailBodies) {
+      if (body && body.textContent) {
+        text += body.textContent + '\n';
+      }
+    }
+
+    if (!text) {
+      console.log('No email body found');
       return null;
     }
 
-    const text = emailBody.textContent || emailBody.innerText;
+    console.log('Parsing email content, length:', text.length);
 
     // Extract amount using various patterns
     let amount = 0;
@@ -238,6 +226,7 @@
     const match1 = text.match(pattern1);
     if (match1) {
       amount = parseInt(match1[1].replace(/,/g, ''), 10);
+      console.log('Amount matched pattern 1:', amount);
     }
 
     // Pattern 2: ¥〇〇,〇〇〇 or ￥〇〇,〇〇〇
@@ -246,29 +235,41 @@
       const match2 = text.match(pattern2);
       if (match2) {
         amount = parseInt(match2[1].replace(/,/g, ''), 10);
+        console.log('Amount matched pattern 2:', amount);
       }
     }
 
-    // Pattern 3: 〇〇,〇〇〇円
+    // Pattern 3: 〇〇,〇〇〇円 (more specific to avoid false positives)
     if (amount === 0) {
-      const pattern3 = /([0-9,]+)\s*円/;
+      const pattern3 = /([0-9]{1,3}(?:,[0-9]{3})*)\s*円/;
       const match3 = text.match(pattern3);
       if (match3) {
         amount = parseInt(match3[1].replace(/,/g, ''), 10);
+        console.log('Amount matched pattern 3:', amount);
       }
     }
 
-    // Extract date
+    // Extract date - look for usage date patterns
     let date = '';
-    const datePattern = /(\d{4})[年\/](\d{1,2})[月\/](\d{1,2})/;
-    const dateMatch = text.match(datePattern);
-    if (dateMatch) {
-      date = `${dateMatch[1]}/${dateMatch[2].padStart(2, '0')}/${dateMatch[3].padStart(2, '0')}`;
+    // Pattern: ご利用日：2024年1月15日 or similar
+    const datePattern1 = /ご利用日[：:]\s*(\d{4})[年\/](\d{1,2})[月\/](\d{1,2})/;
+    const dateMatch1 = text.match(datePattern1);
+    if (dateMatch1) {
+      date = `${dateMatch1[1]}/${dateMatch1[2].padStart(2, '0')}/${dateMatch1[3].padStart(2, '0')}`;
+    }
+
+    // Fallback date pattern
+    if (!date) {
+      const datePattern2 = /(\d{4})[年\/](\d{1,2})[月\/](\d{1,2})/;
+      const dateMatch2 = text.match(datePattern2);
+      if (dateMatch2) {
+        date = `${dateMatch2[1]}/${dateMatch2[2].padStart(2, '0')}/${dateMatch2[3].padStart(2, '0')}`;
+      }
     }
 
     // Extract store name (利用先)
     let store = '';
-    const storePattern = /(?:ご利用先|利用先)[：:]\s*(.+?)(?:\n|$|ご利用)/;
+    const storePattern = /(?:ご利用先|利用先)[：:]\s*(.+?)(?:\n|$|ご利用金額)/;
     const storeMatch = text.match(storePattern);
     if (storeMatch) {
       store = storeMatch[1].trim();
@@ -284,6 +285,7 @@
     }
 
     if (amount === 0) {
+      console.log('No amount found in email');
       return null;
     }
 
@@ -295,21 +297,37 @@
   }
 
   async function goBackToList() {
-    // Try to find and click back button
+    // Method 1: Click back button
     const backButton = document.querySelector('[aria-label="リストに戻る"]') ||
                       document.querySelector('[aria-label="Back to list"]') ||
                       document.querySelector('[data-tooltip="リストに戻る"]') ||
-                      document.querySelector('[data-tooltip="Back to list"]') ||
-                      document.querySelector('.ak.T-I-J3.J-J5-Ji');
+                      document.querySelector('[data-tooltip="Back to list"]');
 
     if (backButton) {
+      console.log('Clicking back button');
       backButton.click();
       await sleep(500);
       return;
     }
 
-    // Alternative: use browser back or keyboard shortcut
-    window.history.back();
+    // Method 2: Use keyboard shortcut 'u'
+    console.log('Using keyboard shortcut to go back');
+    const event = new KeyboardEvent('keydown', {
+      key: 'u',
+      code: 'KeyU',
+      keyCode: 85,
+      which: 85,
+      bubbles: true,
+      cancelable: true
+    });
+    document.dispatchEvent(event);
+    await sleep(500);
+
+    // Method 3: Navigate back via hash if still in email view
+    if (!document.querySelector('tr.zA')) {
+      console.log('Using history.back()');
+      window.history.back();
+    }
   }
 
   function sleep(ms) {
