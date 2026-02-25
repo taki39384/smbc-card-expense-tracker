@@ -2,6 +2,13 @@
 (function() {
   'use strict';
 
+  // Prevent multiple listener registrations
+  if (window.__smbcExpenseTrackerLoaded) {
+    console.log('SMBC Expense Tracker already loaded, skipping...');
+    return;
+  }
+  window.__smbcExpenseTrackerLoaded = true;
+
   // Listen for messages from service worker
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'aggregate') {
@@ -18,7 +25,8 @@
     const end = formatDateForSearch(endDate, true);
 
     // Build search query for SMBC card notifications
-    const searchQuery = `from:contact@vpass.ne.jp subject:ご利用のお知らせ after:${start} before:${end}`;
+    // Search by sender address (vpass.ne.jp is SMBC's notification service)
+    const searchQuery = `from:contact@vpass.ne.jp after:${start} before:${end}`;
 
     console.log('Search query:', searchQuery);
 
@@ -149,6 +157,7 @@
 
   async function getEmailItems() {
     const rows = document.querySelectorAll('tr.zA');
+    console.log(`Found ${rows.length} email rows`);
     return Array.from(rows);
   }
 
@@ -160,11 +169,25 @@
     // Wait for email content to load
     await waitForEmailContent();
 
+    // Check if thread subject matches target
+    const targetSubject = 'ご利用のお知らせ【三井住友カード】';
+    const threadSubject = getThreadSubject();
+    console.log(`Thread subject: "${threadSubject}"`);
+
+    if (!threadSubject.includes(targetSubject)) {
+      console.log('Subject does not match, skipping this thread');
+      // Go back to search results
+      await goBackToList();
+      await sleep(1000);
+      await waitForListView();
+      return [];
+    }
+
     // First, expand ALL collapsed messages in the thread
     await forceExpandAllMessages();
 
-    // Then process all visible message bodies
-    const results = await extractAllMessageBodies();
+    // Then process all visible message bodies, filtering by subject
+    const results = await extractAllMessageBodies(targetSubject);
 
     // Go back to search results
     await goBackToList();
@@ -174,6 +197,30 @@
     await waitForListView();
 
     return results;
+  }
+
+  function getThreadSubject() {
+    // Try various selectors to get thread subject
+    // Method 1: h2 with data-thread-perm-id
+    const h2Subject = document.querySelector('h2[data-thread-perm-id]');
+    if (h2Subject) return h2Subject.textContent || '';
+
+    // Method 2: Thread title in header
+    const threadTitle = document.querySelector('.hP');
+    if (threadTitle) return threadTitle.textContent || '';
+
+    // Method 3: Subject line in first message header
+    const subjectLine = document.querySelector('.ha h2') ||
+                       document.querySelector('[data-thread-perm-id]');
+    if (subjectLine) return subjectLine.textContent || '';
+
+    // Method 4: Check page title
+    const pageTitle = document.title;
+    if (pageTitle && pageTitle.includes('ご利用のお知らせ')) {
+      return pageTitle;
+    }
+
+    return '';
   }
 
   async function forceExpandAllMessages() {
@@ -256,30 +303,40 @@
     console.log(`=== Expansion complete. Found ${finalBodies.length} message bodies ===`);
   }
 
-  async function extractAllMessageBodies() {
+  async function extractAllMessageBodies(targetSubject) {
     const results = [];
     const processedKeys = new Set();
 
-    // Get all message bodies that are currently visible
-    const allBodies = document.querySelectorAll('.a3s.aiL');
-    console.log(`Extracting from ${allBodies.length} message bodies`);
+    // Get all message containers (each contains header + body)
+    const messageContainers = document.querySelectorAll('.gs');
+    console.log(`Found ${messageContainers.length} message containers`);
 
-    for (let i = 0; i < allBodies.length; i++) {
-      const body = allBodies[i];
+    for (let i = 0; i < messageContainers.length; i++) {
+      const container = messageContainers[i];
+
+      // Check if this message's subject matches (if we can find it)
+      const messageSubject = getMessageSubjectFromContainer(container);
+      if (messageSubject && targetSubject && !messageSubject.includes(targetSubject)) {
+        console.log(`Message ${i + 1}: Subject "${messageSubject}" does not match, skipping`);
+        continue;
+      }
+
+      // Find the body within this container
+      const body = container.querySelector('.a3s.aiL') || container.querySelector('.ii.gt');
 
       // Skip if not visible or too short
       if (!body || body.offsetParent === null) {
-        console.log(`Body ${i + 1}: Not visible, skipping`);
+        console.log(`Message ${i + 1}: Body not visible, skipping`);
         continue;
       }
 
       const text = body.textContent || '';
       if (text.length < 50) {
-        console.log(`Body ${i + 1}: Too short (${text.length} chars), skipping`);
+        console.log(`Message ${i + 1}: Too short (${text.length} chars), skipping`);
         continue;
       }
 
-      console.log(`Body ${i + 1}: Parsing (${text.length} chars)`);
+      console.log(`Message ${i + 1}: Parsing (${text.length} chars)`);
 
       const emailData = parseEmailBodyElement(body);
       if (emailData) {
@@ -287,21 +344,21 @@
         if (!processedKeys.has(key)) {
           processedKeys.add(key);
           results.push(emailData);
-          console.log(`Body ${i + 1}: Extracted - date: ${emailData.date}, amount: ${emailData.amount}, store: ${emailData.store}`);
+          console.log(`Message ${i + 1}: Extracted - date: ${emailData.date}, amount: ${emailData.amount}, store: ${emailData.store}`);
         } else {
-          console.log(`Body ${i + 1}: Duplicate key ${key}, skipping`);
+          console.log(`Message ${i + 1}: Duplicate key ${key}, skipping`);
         }
       } else {
-        console.log(`Body ${i + 1}: No data extracted`);
+        console.log(`Message ${i + 1}: No data extracted`);
       }
     }
 
-    // Fallback: try .ii.gt selector if no results
+    // Fallback: try direct body selector if no results from containers
     if (results.length === 0) {
-      console.log('Trying fallback selector .ii.gt');
-      const altBodies = document.querySelectorAll('.ii.gt');
-      for (let i = 0; i < altBodies.length; i++) {
-        const body = altBodies[i];
+      console.log('Trying fallback: direct body selector');
+      const allBodies = document.querySelectorAll('.a3s.aiL');
+      for (let i = 0; i < allBodies.length; i++) {
+        const body = allBodies[i];
         if (body && body.offsetParent !== null && body.textContent.length > 50) {
           const emailData = parseEmailBodyElement(body);
           if (emailData) {
@@ -317,6 +374,18 @@
 
     console.log(`=== Total extracted: ${results.length} messages ===`);
     return results;
+  }
+
+  function getMessageSubjectFromContainer(container) {
+    // Try to find subject in message header
+    const subjectEl = container.querySelector('.hP') ||
+                     container.querySelector('h2') ||
+                     container.querySelector('.ha span');
+    if (subjectEl) {
+      return subjectEl.textContent || '';
+    }
+    // If no subject found in container, return empty (will use thread subject)
+    return '';
   }
 
   function parseCurrentEmailBody() {
